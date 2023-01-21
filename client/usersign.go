@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 )
 
 type SigningAlgorithm struct {
@@ -19,15 +18,6 @@ type SigningAlgorithm struct {
 type captchaTokenCacheItem struct {
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expiresAt"`
-}
-
-type Signing struct {
-	Algorithms []SigningAlgorithm `json:"algorithms"`
-	// CaptchaSign is a misnomer, it's a deterministic hash of a combination of things
-	// including client ID, device ID, and user ID
-	CaptchaSign      string `json:"captchaSign"`
-	LastCaptchaToken string `json:"lastCaptchaToken"`
-	mutex            sync.Mutex
 }
 
 type captchaInitRequest struct {
@@ -50,10 +40,10 @@ type captchaInitResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-func (c *Client) genCaptchaSign() string {
+func (c *UserClient) genCaptchaSign() string {
 	s := &c.State
-	signStr := s.ClientID + s.ClientVersion + s.PackageName + s.DeviceID + s.Timestamp
-	for _, alg := range s.Signing.Algorithms {
+	signStr := global.ClientID + global.ClientVersion + global.PackageName + s.DeviceID + global.Timestamp
+	for _, alg := range global.SigningAlgorithms {
 		md5sum := md5.New()
 		md5sum.Write([]byte(signStr + alg.Salt))
 		signStr = hex.EncodeToString(md5sum.Sum(nil))
@@ -61,39 +51,36 @@ func (c *Client) genCaptchaSign() string {
 	return "1." + signStr
 }
 
-func (c *Client) getCaptchaToken(action string, retries int) (string, error) {
+func (c *UserClient) getCaptchaToken(action string, retries int) (string, error) {
 	if retries < 0 {
 		return "", errors.New("captcha token retries exceeded")
 	}
-	s := &c.State
-	s.Signing.mutex.Lock()
 	req := captchaInitRequest{
-		ClientID:     s.ClientID,
+		ClientID:     global.ClientID,
 		Action:       action,
-		DeviceID:     s.DeviceID,
-		CaptchaToken: s.Signing.LastCaptchaToken,
+		DeviceID:     c.State.DeviceID,
+		CaptchaToken: c.captchaToken,
 	}
-	s.Signing.mutex.Unlock()
 
 	if strings.Contains(action, "signin") {
-		req.Meta.Email = c.Config.Username
+		req.Meta.Email = c.Config.User.Username
 	} else {
-		oauth2, err := c.GetOAuth2()
+		claims, err := c.claims()
 		if err != nil {
 			return "", err
 		}
-		req.Meta.CaptchaSign = s.Signing.CaptchaSign
-		req.Meta.ClientVersion = s.ClientVersion
-		req.Meta.PackageName = s.PackageName
-		req.Meta.UserID = oauth2.Claims().Subject
-		req.Meta.Timestamp = s.Timestamp
+		req.Meta.CaptchaSign = c.captchaSign
+		req.Meta.ClientVersion = global.ClientVersion
+		req.Meta.PackageName = global.PackageName
+		req.Meta.UserID = claims.Subject
+		req.Meta.Timestamp = global.Timestamp
 	}
 
 	marshalled, err := json.Marshal(req)
 	if err != nil {
 		return "", err
 	}
-	resp, err := c.userHTTPClient.Post(
+	resp, err := c.http.Post(
 		userBaseURL+"/v1/shield/captcha/init",
 		"application/json",
 		bytes.NewReader(marshalled),
@@ -104,7 +91,7 @@ func (c *Client) getCaptchaToken(action string, retries int) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		c.InvalidateAccessToken()
+		c.State.User.AccessToken = ""
 		return c.getCaptchaToken(action, retries-1)
 	}
 	var captchaResp captchaInitResponse
@@ -114,15 +101,36 @@ func (c *Client) getCaptchaToken(action string, retries int) (string, error) {
 		return "", err
 	}
 
-	s.Signing.mutex.Lock()
-	s.Signing.LastCaptchaToken = captchaResp.CaptchaToken
-	s.Signing.mutex.Unlock()
+	c.captchaToken = captchaResp.CaptchaToken
 
 	c.SaveState()
 
 	return captchaResp.CaptchaToken, nil
 }
 
-func (c *Client) GetCaptchaToken(action string) (string, error) {
-	return c.getCaptchaToken(action, 1)
+func (c *UserClient) SignRequest(req *http.Request) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	err := c.init()
+	if err != nil {
+		return err
+	}
+
+	action := req.Method + ":" + req.URL.Path
+
+	err = c.updateToken()
+	if err != nil {
+		return err
+	}
+
+	t, err := c.getCaptchaToken(action, 1)
+
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-captcha-token", t)
+	req.Header.Set("Authorization", "Bearer "+c.State.User.AccessToken)
+
+	return nil
 }

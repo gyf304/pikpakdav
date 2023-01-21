@@ -3,7 +3,19 @@ package client
 import (
 	"encoding/json"
 	"os"
+	"sync"
 )
+
+type State struct {
+	DeviceID string `json:"deviceId"`
+
+	User struct {
+		AccessToken  string `json:"token"`
+		RefreshToken string `json:"refreshToken"`
+	} `json:"user"`
+
+	mutex sync.Mutex
+}
 
 func (c *Client) SaveState() error {
 	c.State.mutex.Lock()

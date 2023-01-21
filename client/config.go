@@ -6,10 +6,12 @@ import (
 	"sync"
 )
 
-type ClientConfig struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	mutex    sync.Mutex
+type Config struct {
+	User struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	} `json:"user"`
+	mutex sync.Mutex
 }
 
 func (c *Client) LoadConfig() error {

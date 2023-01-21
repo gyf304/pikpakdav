@@ -8,7 +8,6 @@ import (
 	"strconv"
 
 	"github.com/gyf304/pikpakdav/client"
-	"golang.org/x/net/webdav"
 )
 
 var (
@@ -26,12 +25,14 @@ func init() {
 }
 
 func main() {
-	var err error
-	client := client.Client{
-		StateFile:  "state.json",
-		ConfigFile: "config.json",
+	client := &client.Client{
+		ConfigFile: os.Getenv("CONFIG_FILE"),
+		StateFile:  os.Getenv("STATE_FILE"),
 	}
-	err = client.LoadConfig()
+	client.Config.User.Username = os.Getenv("USERNAME")
+	client.Config.User.Password = os.Getenv("PASSWORD")
+
+	err := client.LoadConfig()
 	if err != nil {
 		log.Println("Failed to load config, recreating it")
 		client.SaveConfig()
@@ -41,22 +42,32 @@ func main() {
 		log.Println("Failed to load state, recreating it")
 		client.SaveState()
 	}
-	if client.Config.Username == "" || client.Config.Password == "" {
+
+	if client.Config.User.Username == "" || client.Config.User.Password == "" {
+		client.SaveConfig()
 		log.Panicln("Please set username and password in config.json")
 	}
-	client.Initialize()
-	err = client.SignIn()
+	user, err := client.User()
+	if err != nil {
+		log.Panicln("Failed to get user client", err)
+	}
+	err = user.SignIn()
 	if err != nil {
 		log.Panicln("Failed to authenticate", err)
 	}
-	log.Println("Authenticated as", client.Config.Username)
-	fs, err := client.FileSystem()
+	log.Println("Authenticated as", client.Config.User.Username)
+
+	drive, err := client.Drive()
+	if err != nil {
+		log.Panicln("Failed to get drive client", err)
+	}
+
 	// fs := webdav.NewMemFS()
-	davHandler := &webdav.Handler{
-		FileSystem: fs,
-		LockSystem: webdav.NewMemLS(),
+	davHandler, err := drive.NewWebDAVHandler()
+	if err != nil {
+		log.Panicln("Failed to create WebDAV handler", err)
 	}
 	log.Printf("Listening on port %d\n", port)
 	http.Handle("/", davHandler)
-	http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+	panic(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }

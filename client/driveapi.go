@@ -8,9 +8,12 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 const (
+	driveAPIBaseURL = "https://api-drive.mypikpak.com"
+
 	listPrefix = driveAPIBaseURL + "/drive/v1/files?thumbnail_size=SIZE_MEDIUM&limit=1000&parent_id="
 	listSuffix = "&with_audit=true&filters=%7B%22trashed%22%3A%7B%22eq%22%3Afalse%7D%2C%22phase%22%3A%7B%22eq%22%3A%22PHASE_TYPE_COMPLETE%22%7D%7D"
 
@@ -20,8 +23,47 @@ const (
 	trashURL = driveAPIBaseURL + "/drive/v1/files:batchTrash"
 )
 
+type DriveClient struct {
+	*Client
+
+	http *http.Client
+
+	mu       sync.Mutex
+	initOnce sync.Once
+}
+
+type driveRoundTripper struct {
+	*DriveClient
+}
+
+func (p *driveRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	user, err := p.Client.User()
+	if err != nil {
+		return nil, err
+	}
+
+	err = user.SignRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("origin", "https://mypikpak.com")
+	req.Header.Set("x-device-id", p.State.DeviceID)
+
+	return global.http.Transport.RoundTrip(req)
+}
+
+func (c *DriveClient) init() error {
+	c.initOnce.Do(func() {
+		c.http = &http.Client{}
+		*c.http = *http.DefaultClient
+		c.http.Transport = &driveRoundTripper{c}
+	})
+	return nil
+}
+
 type DriveFileList struct {
-	c     *Client
+	c     *DriveClient
 	Kind  string       `json:"kind"`
 	Files []*DriveItem `json:"files"`
 }
@@ -37,7 +79,7 @@ func (l *DriveFileList) Get(name string) *DriveItem {
 }
 
 type DriveItem struct {
-	c            *Client
+	c            *DriveClient
 	Kind         string `json:"kind"`
 	ID           string `json:"id"`
 	ParentID     string `json:"parent_id"`
@@ -68,7 +110,7 @@ func (f *DriveItem) List(ctx context.Context) (*DriveFileList, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := f.c.driveApiHTTPClient.Do(req)
+	resp, err := f.c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +137,7 @@ func (f *DriveItem) Trash(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := f.c.driveApiHTTPClient.Do(req)
+	resp, err := f.c.http.Do(req)
 	if err != nil {
 		return err
 	}
@@ -115,7 +157,7 @@ func (f *DriveItem) Fetch(ctx context.Context) (*DriveFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := f.c.driveApiHTTPClient.Do(req)
+	resp, err := f.c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -135,9 +177,21 @@ func (f *DriveItem) Fetch(ctx context.Context) (*DriveFile, error) {
 	return &file, nil
 }
 
-func (c *Client) Root() (*DriveItem, error) {
+func (c *DriveClient) root() (*DriveItem, error) {
 	return &DriveItem{
 		c:    c,
 		Kind: "drive#folder",
 	}, nil
+}
+
+func (c *DriveClient) Root() (*DriveItem, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	err := c.init()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return c.root()
 }

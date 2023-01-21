@@ -1,32 +1,43 @@
 package client
 
-import (
-	"net/http"
-	"sync"
-)
-
-type ClientState struct {
-	ClientID      string `json:"clientId"`
-	ClientVersion string `json:"clientVersion"`
-	PackageName   string `json:"packageName"`
-	Timestamp     string `json:"timestamp"`
-
-	DeviceID string `json:"deviceId"`
-
-	OAuth2  OAuth2  `json:"oauth2"`
-	Signing Signing `json:"signing"`
-
-	mutex sync.Mutex
-}
+import "sync"
 
 type Client struct {
-	State  ClientState
-	Config ClientConfig
+	State  State
+	Config Config
 
 	StateFile  string
 	ConfigFile string
 
-	userHTTPClient     *http.Client
-	driveApiHTTPClient *http.Client
-	downloadHTTPClient *http.Client
+	user  UserClient
+	drive DriveClient
+
+	initOnce sync.Once
+}
+
+func (c *Client) init() error {
+	c.initOnce.Do(func() {
+		c.user.Client = c
+		c.drive.Client = c
+	})
+
+	return nil
+}
+
+func (c *Client) User() (*UserClient, error) {
+	err := c.init()
+	if err != nil {
+		return nil, err
+	}
+
+	return &c.user, nil
+}
+
+func (c *Client) Drive() (*DriveClient, error) {
+	err := c.init()
+	if err != nil {
+		return nil, err
+	}
+
+	return &c.drive, nil
 }

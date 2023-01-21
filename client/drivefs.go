@@ -60,11 +60,11 @@ func (f *fileStat) Sys() interface{} {
 }
 
 type FileSystem struct {
-	c         *Client
+	c         *DriveClient
 	itemCache *ttlcache.Cache[string, *DriveItem]
 	listCache *ttlcache.Cache[string, *DriveFileList]
 	fileCache *ttlcache.Cache[string, *DriveFile]
-	mutex     sync.RWMutex
+	mu        sync.RWMutex
 }
 
 func (d *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
@@ -88,8 +88,8 @@ func (d *FileSystem) cachedList(ctx context.Context, item *DriveItem) (*DriveFil
 }
 
 func (d *FileSystem) cachedFetch(ctx context.Context, item *DriveItem) (*DriveFile, error) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	var err error
 	var file *DriveFile
@@ -191,8 +191,8 @@ func (d *FileSystem) getDriveItem(ctx context.Context, name string) (*DriveItem,
 }
 
 func (d *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	item, err := d.getDriveItem(ctx, name)
 	if err != nil {
@@ -214,8 +214,8 @@ func (d *FileSystem) RemoveAll(ctx context.Context, name string) error {
 		return os.ErrPermission
 	}
 
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	item, err := d.getDriveItem(ctx, name)
 
@@ -249,8 +249,8 @@ func (d *FileSystem) Rename(ctx context.Context, oldname, newname string) error 
 }
 
 func (d *FileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	d.mutex.RLock()
-	defer d.mutex.RUnlock()
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 
 	item, err := d.getDriveItem(ctx, name)
 	if err != nil {
@@ -273,13 +273,13 @@ type File struct {
 	fPos int64
 	dPos int
 
-	mutex sync.Mutex
-	stat  *fileStat
+	mu   sync.Mutex
+	stat *fileStat
 }
 
 func (f *File) Readdir(count int) (fs []os.FileInfo, err error) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	if !f.stat.IsDir() {
 		return nil, os.ErrInvalid
@@ -307,8 +307,8 @@ func (f *File) Stat() (os.FileInfo, error) {
 }
 
 func (f *File) Read(b []byte) (n int, err error) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	if f.stat.IsDir() {
 		return 0, os.ErrInvalid
@@ -334,7 +334,7 @@ func (f *File) Read(b []byte) (n int, err error) {
 		req.Header = map[string][]string{
 			"Range": {"bytes=" + fmt.Sprint(f.fPos) + "-" + fmt.Sprint(size-1)},
 		}
-		resp, err := f.fs.c.downloadHTTPClient.Do(req)
+		resp, err := f.fs.c.http.Do(req)
 		if err != nil {
 			return 0, err
 		}
@@ -353,8 +353,8 @@ func (f *File) Read(b []byte) (n int, err error) {
 }
 
 func (f *File) Seek(offset int64, whence int) (int64, error) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	if f.stat.IsDir() {
 		return 0, os.ErrInvalid
@@ -396,8 +396,8 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (f *File) Close() error {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	if f.cancel != nil {
 		defer f.cancel()
@@ -414,7 +414,7 @@ func (f *File) Write(b []byte) (n int, err error) {
 	return 0, os.ErrPermission
 }
 
-func (c *Client) FileSystem() (*FileSystem, error) {
+func (c *DriveClient) FileSystem() (*FileSystem, error) {
 	return &FileSystem{
 		c:         c,
 		itemCache: ttlcache.New[string, *DriveItem](),
