@@ -1,6 +1,9 @@
 package client
 
-import "sync"
+import (
+	"net/http"
+	"sync"
+)
 
 type Client struct {
 	State  State
@@ -9,8 +12,9 @@ type Client struct {
 	StateFile  string
 	ConfigFile string
 
-	user  UserClient
-	drive DriveClient
+	user       UserClient
+	drive      DriveClient
+	davHandler *http.Handler
 
 	initOnce sync.Once
 }

@@ -87,18 +87,29 @@ func (h *webdavHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.h.ServeHTTP(w, r)
 }
 
-func (c *DriveClient) NewWebDAVHandler() (http.Handler, error) {
+func (c *DriveClient) WebDAV() (http.Handler, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.dav != nil {
+		return c.dav, nil
+	}
+
 	fs, err := c.FileSystem()
 	if err != nil {
 		return nil, err
 	}
+
 	davHandler := &webdav.Handler{
 		FileSystem: fs,
 		LockSystem: webdav.NewMemLS(),
 	}
-	return &webdavHandler{
+	h := &webdavHandler{
 		h:   davHandler,
 		fs:  fs,
 		sem: semaphore.NewWeighted(int64(maxDownloadConnections)),
-	}, nil
+	}
+	c.dav = h
+
+	return h, nil
 }

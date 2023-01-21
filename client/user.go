@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/golang-jwt/jwt"
+	"github.com/google/uuid"
 )
 
 var (
@@ -56,14 +58,16 @@ func (p *userRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 func (c *UserClient) init() error {
+	var err error
 	c.initOnce.Do(func() {
 		c.http = &http.Client{}
 		*c.http = *http.DefaultClient
 		c.http.Transport = &userRoundTripper{c}
 
+		c.State.DeviceID, err = c.genDeviceID()
 		c.captchaSign = c.genCaptchaSign()
 	})
-	return nil
+	return err
 }
 
 type refreshResponse struct {
@@ -80,6 +84,14 @@ type signInRequest struct {
 type signInResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
+}
+
+func (c *UserClient) genDeviceID() (string, error) {
+	u, err := uuid.NewRandom()
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(u.String(), "-", ""), nil
 }
 
 func (c *UserClient) claims() (*jwt.StandardClaims, error) {
@@ -141,6 +153,9 @@ func (c *UserClient) signIn() error {
 }
 
 func (c *UserClient) refreshToken() error {
+	if c.State.User.RefreshToken == "" {
+		return fmt.Errorf("refresh token is empty")
+	}
 	resp, err := c.http.Post(
 		tokenUrl,
 		"application/x-www-form-urlencoded",
@@ -158,6 +173,9 @@ func (c *UserClient) refreshToken() error {
 		// clear tokens: refresh token is invalid
 		c.State.User.AccessToken = ""
 		c.State.User.RefreshToken = ""
+		if resp.StatusCode == http.StatusUnauthorized {
+			return ErrAuthorizationFailed
+		}
 		return fmt.Errorf("status code: %d, %s", resp.StatusCode, string(body))
 	}
 	var response refreshResponse

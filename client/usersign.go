@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -94,15 +96,22 @@ func (c *UserClient) getCaptchaToken(action string, retries int) (string, error)
 		c.State.User.AccessToken = ""
 		return c.getCaptchaToken(action, retries-1)
 	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("getCaptchaToken: %s, %s", resp.Status, body)
+	}
 	var captchaResp captchaInitResponse
 
-	err = json.NewDecoder(resp.Body).Decode(&captchaResp)
+	err = json.Unmarshal(body, &captchaResp)
 	if err != nil {
 		return "", err
 	}
 
 	c.captchaToken = captchaResp.CaptchaToken
-
 	c.SaveState()
 
 	return captchaResp.CaptchaToken, nil

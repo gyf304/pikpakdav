@@ -27,6 +27,7 @@ type DriveClient struct {
 	*Client
 
 	http *http.Client
+	dav  http.Handler
 
 	mu       sync.Mutex
 	initOnce sync.Once
