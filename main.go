@@ -8,12 +8,15 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gyf304/pikpakdav/client"
+	"github.com/jellydator/ttlcache/v3"
 )
 
 var (
-	port = 8080
+	port      = 8080
+	clientTTL = 1 * time.Hour
 )
 
 func init() {
@@ -27,7 +30,7 @@ func init() {
 }
 
 type authHandler struct {
-	clients map[string]*client.Client
+	clients *ttlcache.Cache[string, *client.Client]
 	mu      sync.Mutex
 }
 
@@ -68,7 +71,11 @@ func (a *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.mu.Lock()
-	c := a.clients[u.Username]
+	var c *client.Client
+	item := a.clients.Get(u.Username)
+	if item != nil {
+		c = item.Value()
+	}
 	if c == nil {
 		c = &client.Client{}
 		c.Config.User.Username = u.Username
@@ -85,7 +92,7 @@ func (a *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("401 Unauthorized"))
 			return
 		}
-		a.clients[u.Username] = c
+		a.clients.Set(u.Username, c, clientTTL)
 	} else if c.Config.User.Password != u.Password {
 		c.Config.User.Password = u.Password
 		c.State.User.AccessToken = ""
@@ -102,7 +109,7 @@ func (a *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("401 Unauthorized"))
 			return
 		}
-		a.clients[u.Username] = c
+		a.clients.Set(u.Username, c, clientTTL)
 	}
 	a.mu.Unlock()
 
@@ -125,7 +132,8 @@ func (a *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.Handle("/", &authHandler{
-		clients: make(map[string]*client.Client),
+		clients: ttlcache.New[string, *client.Client](),
 	})
+	fmt.Println("Listening on port", port)
 	panic(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }

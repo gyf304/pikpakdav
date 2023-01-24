@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/flynn/json5"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -53,7 +54,17 @@ func (g *globalRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	req.Header.Set("sec-ch-ua-platform", "\"macOS\"")
 	req.Header.Set("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36")
 
-	return http.DefaultTransport.RoundTrip(req)
+	partialLog := log.Debug().Str("method", req.Method).Str("url", req.URL.String())
+
+	resp, err := http.DefaultTransport.RoundTrip(req)
+
+	if err != nil {
+		partialLog.Err(err).Msg("http request error")
+	} else {
+		partialLog.Str("status", resp.Status).Msg("http request")
+	}
+
+	return resp, err
 }
 
 func init() {

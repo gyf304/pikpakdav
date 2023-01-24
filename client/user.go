@@ -204,6 +204,12 @@ func (c *UserClient) updateToken() error {
 	return c.signIn()
 }
 
+func (c *UserClient) logout() error {
+	c.State.User.AccessToken = ""
+	c.State.User.RefreshToken = ""
+	return c.SaveState()
+}
+
 func (c *UserClient) SignIn() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

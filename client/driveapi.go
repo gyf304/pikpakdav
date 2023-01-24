@@ -39,19 +39,34 @@ type driveRoundTripper struct {
 
 func (p *driveRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	user, err := p.Client.User()
-	if err != nil {
-		return nil, err
+
+	for i := 0; i < 2; i++ {
+		if err != nil {
+			return nil, err
+		}
+
+		err = user.SignRequest(req)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("origin", "https://mypikpak.com")
+		req.Header.Set("x-device-id", p.State.DeviceID)
+
+		resp, err := global.http.Transport.RoundTrip(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			p.user.logout()
+			continue
+		}
+
+		return resp, err
 	}
 
-	err = user.SignRequest(req)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("origin", "https://mypikpak.com")
-	req.Header.Set("x-device-id", p.State.DeviceID)
-
-	return global.http.Transport.RoundTrip(req)
+	return nil, errors.New("failed to sign request")
 }
 
 func (c *DriveClient) init() error {
